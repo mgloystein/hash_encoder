@@ -25,13 +25,22 @@ func NewHasEncoderService(c *config.Config) (*HashEncoderService, error) {
 		return nil, fmt.Errorf(`Could not create data storage, "%s"`, err.Error())
 	}
 
-	return &HashEncoderService{
+	service := &HashEncoderService{
 		enigma: enigma,
 		store:  store,
 		timing: map[int]int64{},
 		lock:   &lock,
 		c:      c,
-	}, nil
+		queue:  make(chan *persistablePackage, 10),
+		active: true,
+	}
+	service.init()
+	return service, nil
+}
+
+type persistablePackage struct {
+	storage.Persistable
+	value string
 }
 
 type HashEncoderService struct {
@@ -40,11 +49,27 @@ type HashEncoderService struct {
 	timing map[int]int64
 	lock   *sync.RWMutex
 	c      *config.Config
+	queue  chan *persistablePackage
+	active bool
+}
+
+func (h *HashEncoderService) init() {
+	for i := 0; i < 10; i++ {
+		fmt.Printf("Starting work process: %d\n", i)
+		go func() {
+			var pack *persistablePackage
+			for h.active {
+				pack = <-h.queue
+				time.Sleep(h.c.WriteDelay * time.Second)
+				h.writeToStore(pack.value, pack.Persistable)
+			}
+		}()
+	}
 }
 
 func (h *HashEncoderService) CreateHash(input string) int {
 	itemPerstable := h.store.Reserve()
-	go h.writeToStore(input, itemPerstable)
+	h.queue <- &persistablePackage{itemPerstable, input}
 	return itemPerstable.ID()
 }
 
@@ -68,7 +93,7 @@ func (h *HashEncoderService) Stats() *common.Stats {
 }
 
 func (h *HashEncoderService) writeToStore(input string, itemPerstable storage.Persistable) {
-	time.Sleep(h.c.WriteDelay * time.Second)
+	fmt.Printf("Attempting to write item %d\n", itemPerstable.ID())
 	h.lock.Lock()
 	start := time.Now().UnixNano()
 	hashed, _ := h.enigma.Generate(input)
@@ -77,4 +102,5 @@ func (h *HashEncoderService) writeToStore(input string, itemPerstable storage.Pe
 	if err := itemPerstable.Persist(hashed); err != nil {
 		fmt.Printf("And error occured saving item %d, see below\n%+v\n", itemPerstable.ID(), err)
 	}
+	fmt.Printf("Successfully writen item %d\n", itemPerstable.ID())
 }

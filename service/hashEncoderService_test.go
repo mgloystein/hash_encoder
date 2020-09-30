@@ -11,6 +11,7 @@ import (
 
 func TestCreateHash(t *testing.T) {
 	c := config.DefaultConfig()
+	c.WriteDelay = 1
 
 	testObject, err := service.NewHasEncoderService(c)
 
@@ -40,10 +41,21 @@ func TestCreateHash(t *testing.T) {
 	if itemValue != "sXPrOsBtd6oI6KZMpLLQZOMkdJnpjdKGYf9RrLxG0no=" {
 		t.Errorf(`Expected %s to mbe "sXPrOsBtd6oI6KZMpLLQZOMkdJnpjdKGYf9RrLxG0no="`, itemValue)
 	}
+
+	stats := testObject.Stats()
+
+	if stats == nil {
+		t.Error("Expected an instance of common.Stats to be returned")
+	}
+
+	if stats.Count != 1 {
+		t.Errorf("Expected 1 item, found %d", stats.Count)
+	}
 }
 
 func TestStats(t *testing.T) {
 	c := config.DefaultConfig()
+	c.WriteDelay = 1
 
 	testObject, err := service.NewHasEncoderService(c)
 
