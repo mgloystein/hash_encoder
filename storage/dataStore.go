@@ -13,7 +13,8 @@ type DataStore interface {
 
 type Persistable interface {
 	ID() int
-	Persist(item string) error
+	Value(item string) 
+	Persist() error
 }
 
 func NewDataStore(c *config.Config) (DataStore, error) {

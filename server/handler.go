@@ -1,36 +1,44 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/mgloystein/hash_encoder/common"
 	"github.com/mgloystein/hash_encoder/config"
 	"github.com/mgloystein/hash_encoder/service"
 )
 
-func NewHashEncoder(c *config.Config, shutdown chan os.Signal) (*HashEncoder, error) {
+// NewHashEncoder returns a new HashEncoder HTTP handler
+func NewHashEncoder(c *config.Config) (*HashEncoder, error) {
 	svc, err := service.NewHasEncoderService(c)
 	if err != nil {
 		return nil, err
 	}
+	shutdown := make(chan os.Signal, 1)
 	return &HashEncoder{
 		service:  svc,
 		shutdown: shutdown,
+		c:        c,
 	}, nil
 }
 
-// Http handler for has encoding passwords
+// HashEncoder is an HTTP handler for hashing and encoding passwords
 type HashEncoder struct {
 	service  *service.HashEncoderService
 	shutdown chan os.Signal
+	c        *config.Config
 }
 
+// HashPostRequest handles POST requests to /hash
 func (h *HashEncoder) HashPostRequest(res http.ResponseWriter, req *http.Request) {
 	passwd := req.PostFormValue("password")
 
@@ -52,6 +60,7 @@ func (h *HashEncoder) HashPostRequest(res http.ResponseWriter, req *http.Request
 	}
 }
 
+// HashGetRequest handles GET requests to /hash/:id
 func (h *HashEncoder) HashGetRequest(res http.ResponseWriter, req *http.Request) {
 	path := strings.TrimPrefix(strings.ToLower(req.URL.Path), "/")
 	parts := strings.Split(path, "/")
@@ -67,12 +76,49 @@ func (h *HashEncoder) HashGetRequest(res http.ResponseWriter, req *http.Request)
 	}
 }
 
+// Shutdown requests the server to terminate
 func (h *HashEncoder) Shutdown() {
 	if h.shutdown != nil {
 		h.shutdown <- syscall.SIGTERM
 	}
 }
 
+// Serve starts the HTTP and system singal listeners
+func (h *HashEncoder) Serve() error {
+	signal.Notify(h.shutdown, os.Interrupt, os.Kill, syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
+
+	httpServer := &http.Server{
+		Addr:    fmt.Sprintf(":%d", h.c.Port),
+		Handler: h,
+	}
+
+	go func() {
+		fmt.Printf("Starting server on port %d\n", h.c.Port)
+		if err := httpServer.ListenAndServe(); err != nil {
+			switch err {
+			case http.ErrServerClosed:
+				fmt.Println("Server connection closed")
+			default:
+				fmt.Printf("Unexpected server error: %+v\n", err)
+				h.shutdown <- syscall.SIGKILL
+			}
+		}
+	}()
+
+	ctx, cancel := handleSystemSignals(h.shutdown)
+
+	defer func() {
+		h.service.Terminate()
+		if cancel != nil {
+			cancel()
+		}
+	}()
+
+	return httpServer.Shutdown(ctx)
+}
+
+// ServeHTTP is the initial responder to all HTTP requests
+// TODO: Replace with Gin or Gorilla
 func (h *HashEncoder) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	path := strings.TrimPrefix(strings.ToLower(req.URL.Path), "/")
 	parts := strings.Split(path, "/")
@@ -111,12 +157,12 @@ func (h *HashEncoder) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 
 func notFoundResponse(res http.ResponseWriter) {
 	res.Header().Set("Content-Type", "application/json")
-	writeResult(res, http.StatusNotFound, &common.MessageResult{"Can't find requested resource"})
+	writeResult(res, http.StatusNotFound, &common.MessageResult{Message: "Can't find requested resource"})
 }
 
 func methodNotAllowedResponse(res http.ResponseWriter, method string) {
 	res.Header().Set("Content-Type", "application/json")
-	writeResult(res, http.StatusMethodNotAllowed, &common.MessageResult{fmt.Sprintf("%s is not allowed", method)})
+	writeResult(res, http.StatusMethodNotAllowed, &common.MessageResult{Message: fmt.Sprintf("%s is not allowed", method)})
 }
 
 func writeError(res http.ResponseWriter, status int, err error) {
@@ -128,4 +174,16 @@ func writeResult(res http.ResponseWriter, status int, response interface{}) {
 	encoder := json.NewEncoder(res)
 	res.WriteHeader(status)
 	encoder.Encode(response)
+}
+
+func handleSystemSignals(shutdown chan os.Signal) (context.Context, context.CancelFunc) {
+	switch <-shutdown {
+	case os.Interrupt:
+	case syscall.SIGINT:
+	case syscall.SIGTERM:
+		return context.WithTimeout(context.Background(), 10*time.Second)
+	default:
+		return context.WithTimeout(context.Background(), 0*time.Second)
+	}
+	return nil, nil
 }

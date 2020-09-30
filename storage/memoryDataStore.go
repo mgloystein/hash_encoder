@@ -44,6 +44,7 @@ func (m *memoryDataStore) Reserve() Persistable {
 type memoryPersistance struct {
 	*memoryDataStore
 	id        int
+	value     string
 	persisted bool
 }
 
@@ -51,7 +52,11 @@ func (p *memoryPersistance) ID() int {
 	return p.id
 }
 
-func (p *memoryPersistance) Persist(item string) error {
+func (p *memoryPersistance) Value(value string)  {
+	p.value = value
+}
+
+func (p *memoryPersistance) Persist() error {
 	if p.persisted {
 		return nil
 	}
@@ -60,7 +65,7 @@ func (p *memoryPersistance) Persist(item string) error {
 		return fmt.Errorf("Item id %d was reserved", p.id)
 	}
 
-	p.store[p.id] = item
+	p.store[p.id] = p.value
 	p.persisted = true
 
 	return nil

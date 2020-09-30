@@ -11,6 +11,7 @@ import (
 	"github.com/mgloystein/hash_encoder/storage"
 )
 
+// NewHasEncoderService creates a new service for hashing, encoding, and storing passwords
 func NewHasEncoderService(c *config.Config) (*HashEncoderService, error) {
 	var lock sync.RWMutex
 	enigma, err := hasher.NewEnigma(c.MasterSecret)
@@ -26,13 +27,13 @@ func NewHasEncoderService(c *config.Config) (*HashEncoderService, error) {
 	}
 
 	service := &HashEncoderService{
-		enigma: enigma,
-		store:  store,
-		timing: map[int]int64{},
-		lock:   &lock,
-		c:      c,
-		queue:  make(chan *persistablePackage, 10),
-		active: true,
+		enigma:   enigma,
+		store:    store,
+		timing:   map[int]int64{},
+		lock:     &lock,
+		c:        c,
+		queue:    make(chan *persistablePackage, c.WorkerCount),
+		complete: make(chan bool, 1),
 	}
 	service.init()
 	return service, nil
@@ -43,40 +44,67 @@ type persistablePackage struct {
 	value string
 }
 
+// HashEncoderService is a service to hash, encode, and store password passwords
 type HashEncoderService struct {
-	enigma *hasher.Enigma
-	store  storage.DataStore
-	timing map[int]int64
-	lock   *sync.RWMutex
-	c      *config.Config
-	queue  chan *persistablePackage
-	active bool
+	enigma   *hasher.Enigma
+	store    storage.DataStore
+	timing   map[int]int64
+	lock     *sync.RWMutex
+	c        *config.Config
+	queue    chan *persistablePackage
+	complete chan bool
 }
 
 func (h *HashEncoderService) init() {
-	for i := 0; i < 10; i++ {
-		fmt.Printf("Starting work process: %d\n", i)
-		go func() {
-			var pack *persistablePackage
-			for h.active {
-				pack = <-h.queue
-				time.Sleep(h.c.WriteDelay * time.Second)
-				h.writeToStore(pack.value, pack.Persistable)
-			}
-		}()
+	for i := 0; i < h.c.WorkerCount; i++ {
+		fmt.Printf("Starting worker process: %d\n", i)
+		go h.worker(i)
 	}
 }
 
+func (h *HashEncoderService) worker(id int) {
+	for true {
+		pack := <-h.queue
+
+		if pack == nil {
+			fmt.Printf("Stopping worker process: %d\n", id)
+			break
+		}
+
+		time.Sleep(h.c.WriteDelay * time.Second)
+		itemPerstable := pack.Persistable
+
+		hashed := h.generateHash(pack.value, itemPerstable.ID())
+		itemPerstable.Value(hashed)
+
+		h.writeToStore(itemPerstable)
+	}
+	h.complete <- true
+}
+
+// Terminate shuts down the worker queues
+func (h *HashEncoderService) Terminate() {
+	for i := 0; i < h.c.WorkerCount; i++ {
+		h.queue <- nil
+	}
+	for i := 0; i < h.c.WorkerCount; i++ {
+		<-h.complete
+	}
+}
+
+// CreateHash reserves an ID for a hashed password, then send it to a woerk queue for processing
 func (h *HashEncoderService) CreateHash(input string) int {
 	itemPerstable := h.store.Reserve()
 	h.queue <- &persistablePackage{itemPerstable, input}
 	return itemPerstable.ID()
 }
 
+// GetHashedItem gets the hashed and encoded password by ID
 func (h *HashEncoderService) GetHashedItem(id int) (string, error) {
 	return h.store.Get(id)
 }
 
+// Stats allows introspection into the number of stored passwords and how long it took to process each
 func (h *HashEncoderService) Stats() *common.Stats {
 	result := &common.Stats{}
 	h.lock.RLock()
@@ -92,14 +120,21 @@ func (h *HashEncoderService) Stats() *common.Stats {
 	return result
 }
 
-func (h *HashEncoderService) writeToStore(input string, itemPerstable storage.Persistable) {
-	fmt.Printf("Attempting to write item %d\n", itemPerstable.ID())
+func (h *HashEncoderService) generateHash(value string, id int) string {
 	h.lock.Lock()
+	defer h.lock.Unlock()
+
 	start := time.Now().UnixNano()
-	hashed, _ := h.enigma.Generate(input)
-	h.timing[itemPerstable.ID()] = time.Now().UnixNano() - start
-	h.lock.Unlock()
-	if err := itemPerstable.Persist(hashed); err != nil {
+
+	hashed, _ := h.enigma.Generate(value)
+
+	h.timing[id] = time.Now().UnixNano() - start
+
+	return hashed
+}
+
+func (h *HashEncoderService) writeToStore(itemPerstable storage.Persistable) {
+	if err := itemPerstable.Persist(); err != nil {
 		fmt.Printf("And error occured saving item %d, see below\n%+v\n", itemPerstable.ID(), err)
 	}
 	fmt.Printf("Successfully writen item %d\n", itemPerstable.ID())

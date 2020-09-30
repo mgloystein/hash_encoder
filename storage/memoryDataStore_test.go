@@ -17,7 +17,8 @@ func TestMemoryStore(t *testing.T) {
 
 	persistable1 := testObject.Reserve()
 	result1 := persistable1.ID()
-	err1 := persistable1.Persist(item1)
+	persistable1.Value(item1)
+	err1 := persistable1.Persist()
 
 	if err1 != nil {
 		t.Errorf("Storing resulted in an error, see below \n %+v", err1)
@@ -29,7 +30,8 @@ func TestMemoryStore(t *testing.T) {
 
 	persistable2 := testObject.Reserve()
 	result2 := persistable2.ID()
-	err2 := persistable2.Persist(item2)
+	persistable2.Value(item2)
+	err2 := persistable2.Persist()
 
 	if err2 != nil {
 		t.Errorf("Storing resulted in an error, see below \n %+v", err2)
