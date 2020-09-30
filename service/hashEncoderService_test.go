@@ -1,4 +1,4 @@
-package server_test
+package service_test
 
 import (
 	"fmt"
@@ -6,13 +6,13 @@ import (
 	"time"
 
 	"github.com/mgloystein/hash_encoder/config"
-	"github.com/mgloystein/hash_encoder/server"
+	"github.com/mgloystein/hash_encoder/service"
 )
 
 func TestCreateHash(t *testing.T) {
 	c := config.DefaultConfig()
 
-	testObject, err := server.NewHashEncoder(c, nil)
+	testObject, err := service.NewHasEncoderService(c)
 
 	if err != nil {
 		t.Errorf("Creating the hash encoder service resulted in an error, see below \n %+v", err)
@@ -45,7 +45,7 @@ func TestCreateHash(t *testing.T) {
 func TestStats(t *testing.T) {
 	c := config.DefaultConfig()
 
-	testObject, err := server.NewHashEncoder(c, nil)
+	testObject, err := service.NewHasEncoderService(c)
 
 	if err != nil {
 		t.Errorf("Creating the hash encoder service resulted in an error, see below \n %+v", err)

@@ -1,10 +1,10 @@
-package server
+package common
 
-type messageResult struct {
+type MessageResult struct {
 	Message string `json:"message"`
 }
 
-type stats struct {
+type Stats struct {
 	Count              int64   `json:"total"`
 	AverageProcessTime float64 `json:"average"`
 }
